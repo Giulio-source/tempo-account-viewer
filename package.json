@@ -1,0 +1,24 @@
+{
+  "name": "jira-issue-activity-custom-ui",
+  "version": "1.1.19",
+  "main": "index.js",
+  "license": "MIT",
+  "private": true,
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "eslint": "^8.56.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "concurrently": "^10.0.5"
+  },
+  "dependencies": {
+    "@forge/api": "^8.1.0",
+    "@forge/kvs": "^2.0.6",
+    "@forge/resolver": "2.0.0"
+  },
+  "scripts": {
+    "dev": "concurrently -n \"TUNNEL,FRONTEND\" -c \"cyan,magenta\" \"forge tunnel\" \"npm start --prefix static/frontend\"",
+    "build:frontend": "npm run build --prefix static/frontend",
+    "deploy:app": "npm run build:frontend && forge deploy",
+    "deploy:prod": "npm run build:frontend && forge deploy -e production"
+  }
+}

@@ -1,0 +1,33 @@
+modules:
+  jira:globalPage:
+    - key: tempo-account-viewer
+      icon: resource:main;icon.svg
+      resource: main
+      resolver:
+        function: resolver
+      title: Tempo Accounts
+      layout: blank
+      displayConditions:
+        isLoggedIn: true
+  function:
+    - key: resolver
+      handler: index.handler
+resources:
+  - key: main
+    path: static/frontend/build
+    tunnel:
+      port: 3000
+permissions:
+  content:
+    styles:
+      - "unsafe-inline"
+  external:
+    fetch:
+      backend:
+        - "https://api.tempo.io"
+app:
+  runtime:
+    name: nodejs24.x
+    memoryMB: 256
+    architecture: arm64
+  id: ari:cloud:ecosystem::app/ebe386be-d5ae-45e9-8138-6ff9d0565c13
