@@ -20,11 +20,12 @@ resources:
 permissions:
   content:
     styles:
-      - "unsafe-inline"
+      - unsafe-inline
   external:
     fetch:
       backend:
-        - "https://api.tempo.io"
+        - address: https://api.tempo.io
+  scopes: []
 app:
   runtime:
     name: nodejs24.x
