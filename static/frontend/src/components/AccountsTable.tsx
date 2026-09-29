@@ -27,9 +27,11 @@ import { Button } from "./ui/button";
 import { TempoAccount } from "../hooks/useTempoAccounts";
 import {
   AVAILABLE_STATUSES,
+  exportAccountsToCsv,
   getStatusBadgeStyle,
   getUsageColors,
 } from "../lib/utils";
+import { AnimatedProgressBar } from "./AnimatedProgressBar";
 
 interface AccountsTableProps {
   accounts: TempoAccount[];
@@ -157,60 +159,20 @@ export const AccountsTable = ({ accounts }: AccountsTableProps) => {
     }
   };
 
-  // CSV Export Logic
+  // Reusable CSV Export Handler
   const handleDownloadCsv = () => {
     if (sortedAccounts.length === 0) return;
-
-    const headers = [
-      "Account Key",
-      "Account Name",
-      "Total Hours",
-      "Basket Days",
-      "Rate ($/hr)",
-      "Billed Hours",
-      "Used Time %",
-      "Remaining Hours",
-      "Status",
-    ];
-
-    const csvRows = sortedAccounts.map((account) => {
-      const est = account.estimatedHours || 0;
-      const logged = account.totalLoggedHours || 0;
-      const rate = account.hourlyRate || 0;
-      const days = est / 8;
-      const remaining = est - logged;
-      const rawPercent = est > 0 ? (logged / est) * 100 : 0;
-      const status = account.status || "OPEN";
-
-      return [
-        `"${(account.key || "").replace(/"/g, '""')}"`,
-        `"${(account.name || "").replace(/"/g, '""')}"`,
-        est > 0 ? est : 0,
-        days > 0 ? days : 0,
-        rate > 0 ? rate : 0,
-        logged,
-        rawPercent,
-        est > 0 ? remaining : 0,
-        `"${status}"`,
-      ].join(",");
-    });
-
-    const csvString = [headers.join(","), ...csvRows].join("\n");
-    const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
 
     const customerName = accounts[0]?.customer?.name || "accounts";
     const sanitizedCustomerName = customerName
       .toLowerCase()
       .replace(/[^a-z0-9]/g, "_");
 
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `${sanitizedCustomerName}_tempo_report.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    exportAccountsToCsv(
+      sortedAccounts,
+      `${sanitizedCustomerName}_tempo_report.csv`,
+      false, // Exclude customer column since table is already grouped under a single customer
+    );
   };
 
   const SortableHeader = ({
@@ -265,17 +227,18 @@ export const AccountsTable = ({ accounts }: AccountsTableProps) => {
       {/* Table Action Bar */}
       <div className="flex items-center justify-between px-1">
         <div className="flex items-center gap-2">
-          {/* Status Multi-Select Filter */}
+          {/* Export CSV Button */}
           <Button
-            variant="outline"
             size="sm"
             onClick={handleDownloadCsv}
             disabled={sortedAccounts.length === 0}
-            className="h-8 bg-white"
+            className="h-8"
           >
-            <Download className="mr-1.5 h-3.5 w-3.5 text-slate-500" />
+            <Download className="h-3.5 w-3.5 text-white mr-1.5" />
             Export CSV
           </Button>
+
+          {/* Status Multi-Select Filter */}
           <DropdownMenu open={isOpen} onOpenChange={handleOpenChange}>
             <DropdownMenuTrigger asChild>
               <Button
@@ -353,7 +316,7 @@ export const AccountsTable = ({ accounts }: AccountsTableProps) => {
           )}
         </div>
 
-        {/* Export CSV Button & Showing Count */}
+        {/* Showing Count */}
         <div className="flex items-center gap-3">
           <span className="text-xs text-slate-500">
             Showing {sortedAccounts.length} of {accounts.length} accounts
@@ -419,7 +382,6 @@ export const AccountsTable = ({ accounts }: AccountsTableProps) => {
                 const remaining = est - logged;
 
                 const rawPercent = est > 0 ? (logged / est) * 100 : 0;
-                const barPercent = Math.min(rawPercent, 100);
                 const colors = getUsageColors(rawPercent);
                 const status = account.status || "OPEN";
 
@@ -442,19 +404,7 @@ export const AccountsTable = ({ accounts }: AccountsTableProps) => {
                     </TableCell>
                     <TableCell>
                       {est > 0 ? (
-                        <div className="flex flex-col gap-1.5 w-full">
-                          <div className="flex justify-between text-xs font-medium">
-                            <span className={colors.text}>
-                              {rawPercent.toFixed(2)}%
-                            </span>
-                          </div>
-                          <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-                            <div
-                              className={`h-full rounded-full transition-all duration-500 ${colors.bar}`}
-                              style={{ width: `${barPercent}%` }}
-                            />
-                          </div>
-                        </div>
+                        <AnimatedProgressBar rawPercent={rawPercent} />
                       ) : (
                         <span className="text-xs text-slate-400">N/A</span>
                       )}
