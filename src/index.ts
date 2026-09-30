@@ -1,24 +1,135 @@
-import Resolver from "@forge/resolver";
 import { fetch } from "@forge/api";
+import kvs from "@forge/kvs";
+import Resolver from "@forge/resolver";
 
+const TEMPO_TOKEN_ENDPOINT = "https://api.tempo.io/oauth/token/";
 const resolver = new Resolver();
 
-resolver.define("getTempoAccounts", async () => {
-  // @ts-ignore
-  const tempoToken = process.env.TEMPO_API_TOKEN;
+interface TempoTokenData {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+}
 
-  if (!tempoToken) {
-    throw new Error("Tempo API token is not configured.");
+/**
+ * Retrieves a valid Tempo access token.
+ * Automatically refreshes the token in the background if it is near expiration.
+ */
+async function getValidTempoToken(): Promise<string> {
+  const tokenData = (await kvs.getSecret("TEMPO_OAUTH_DATA")) as
+    | TempoTokenData
+    | undefined;
+
+  if (!tokenData || !tokenData.refreshToken) {
+    throw new Error("NO_TEMPO_TOKENS");
   }
 
-  const headers = {
-    Authorization: `Bearer ${tempoToken}`,
-    Accept: "application/json",
+  // Refresh 5 minutes before actual expiration
+  const bufferMs = 5 * 60 * 1000;
+  const isExpired = Date.now() + bufferMs >= tokenData.expiresAt;
+
+  if (!isExpired && tokenData.accessToken) {
+    return tokenData.accessToken;
+  }
+
+  const clientId = process.env.TEMPO_CLIENT_ID;
+  const clientSecret = process.env.TEMPO_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    throw new Error("MISSING_OAUTH_CREDENTIALS");
+  }
+
+  const response = await fetch(TEMPO_TOKEN_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: tokenData.refreshToken,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`REFRESH_FAILED_${response.status}`);
+  }
+
+  const newTokens = await response.json();
+
+  const updatedTokenData: TempoTokenData = {
+    accessToken: newTokens.access_token,
+    refreshToken: newTokens.refresh_token || tokenData.refreshToken,
+    expiresAt: Date.now() + newTokens.expires_in * 1000,
   };
 
-  const accountsResponse = await fetch("https://api.tempo.io/4/accounts", {
-    headers,
+  await kvs.setSecret("TEMPO_OAUTH_DATA", updatedTokenData);
+  return updatedTokenData.accessToken;
+}
+
+// 1. Resolver: Provides Client ID & Redirect URI to frontend
+resolver.define("getTempoAuthUrl", async () => {
+  return {
+    clientId: process.env.TEMPO_CLIENT_ID,
+    redirectUri: process.env.TEMPO_REDIRECT_URI,
+  };
+});
+
+// 2. Resolver: Exchanges initial auth code for token pair
+resolver.define("exchangeTempoCode", async (req) => {
+  const { code } = req.payload;
+  const clientId = process.env.TEMPO_CLIENT_ID;
+  const clientSecret = process.env.TEMPO_CLIENT_SECRET;
+  const redirectUri = process.env.TEMPO_REDIRECT_URI;
+
+  if (!code) throw new Error("CODE_REQUIRED");
+
+  const response = await fetch(TEMPO_TOKEN_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      client_id: clientId || "",
+      client_secret: clientSecret || "",
+      redirect_uri: redirectUri || "",
+      code,
+    }),
   });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`EXCHANGE_FAILED: ${errText}`);
+  }
+
+  const tokenInfo = await response.json();
+
+  const tokenData: TempoTokenData = {
+    accessToken: tokenInfo.access_token,
+    refreshToken: tokenInfo.refresh_token,
+    expiresAt: Date.now() + tokenInfo.expires_in * 1000,
+  };
+
+  await kvs.setSecret("TEMPO_OAUTH_DATA", tokenData);
+  return { success: true };
+});
+
+// 3. Resolver: Fetches Tempo accounts & enriches with parsed metadata and logged worklog hours
+resolver.define("getTempoAccounts", async () => {
+  const token = await getValidTempoToken();
+
+  const accountsResponse = await fetch(
+    "https://api.tempo.io/4/accounts/search?limit=1000",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        statuses: ["OPEN", "CLOSED", "ARCHIVED"],
+      }),
+    },
+  );
+
   if (!accountsResponse.ok) {
     throw new Error(`Tempo API Error: ${accountsResponse.status}`);
   }
@@ -32,7 +143,7 @@ resolver.define("getTempoAccounts", async () => {
       let hourlyRate = 0;
       let cleanName = account.name;
 
-      const prefixMatch = account.name.match(/^\[(.*?)\]/);
+      const prefixMatch = account.name?.match(/^\[(.*?)\]/);
       if (prefixMatch) {
         const content = prefixMatch[1].toUpperCase();
 
@@ -42,16 +153,19 @@ resolver.define("getTempoAccounts", async () => {
         const rMatch = content.match(/R(\d+(?:\.\d+)?)/);
         if (rMatch) hourlyRate = parseFloat(rMatch[1]);
 
-        // Clean the name for better UI display
         cleanName = account.name.replace(/^\[.*?\]\s*/, "");
       }
 
-      // 2. Fetch Worklogs
       let totalLoggedHours = 0;
       try {
         const worklogRes = await fetch(
           `https://api.tempo.io/4/worklogs/account/${account.key}`,
-          { headers },
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+          },
         );
 
         if (worklogRes.ok) {
@@ -65,7 +179,7 @@ resolver.define("getTempoAccounts", async () => {
           totalLoggedHours = Math.round((totalSeconds / 3600) * 100) / 100;
         }
       } catch (err) {
-        console.error(`Failed to fetch worklogs for ${account.key}`);
+        console.error(`Failed to fetch worklogs for ${account.key}`, err);
       }
 
       return {
@@ -79,6 +193,24 @@ resolver.define("getTempoAccounts", async () => {
   );
 
   return accountsWithDetails;
+});
+
+resolver.define("debugStorage", async () => {
+  const oauthData = await kvs.getSecret("TEMPO_OAUTH_DATA");
+  console.log(
+    "📦 [DEBUG STORAGE] TEMPO_OAUTH_DATA:",
+    JSON.stringify(oauthData, null, 2),
+  );
+  return oauthData || { message: "No data found" };
+});
+
+// 2. Wipe stored secret/data
+resolver.define("clearStorage", async () => {
+  await kvs.deleteSecret("TEMPO_OAUTH_DATA");
+  console.log(
+    "🧹 [DEBUG STORAGE] Cleared TEMPO_OAUTH_DATA from Forge storage!",
+  );
+  return { status: "cleared" };
 });
 
 export const handler = resolver.getDefinitions();

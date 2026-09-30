@@ -12,11 +12,13 @@ modules:
   function:
     - key: resolver
       handler: index.handler
+
 resources:
   - key: main
     path: static/frontend/build
     tunnel:
       port: 3000
+
 permissions:
   content:
     styles:
@@ -24,8 +26,10 @@ permissions:
   external:
     fetch:
       backend:
-        - address: https://api.tempo.io
-  scopes: []
+        - "https://api.tempo.io"
+  scopes:
+    - storage:app
+
 app:
   runtime:
     name: nodejs24.x

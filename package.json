@@ -6,9 +6,9 @@
   "private": true,
   "devDependencies": {
     "@types/node": "^26.6.3",
+    "concurrently": "^10.0.5",
     "eslint": "^8.56.0",
-    "eslint-plugin-react-hooks": "^4.6.0",
-    "concurrently": "^10.0.5"
+    "eslint-plugin-react-hooks": "^4.6.0"
   },
   "dependencies": {
     "@forge/api": "^8.1.0",

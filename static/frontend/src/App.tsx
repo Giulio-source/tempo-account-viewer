@@ -1,5 +1,13 @@
 import { useState, useMemo, useEffect } from "react";
-import { Download, RotateCcw, Save, Check } from "lucide-react";
+import {
+  Download,
+  RotateCcw,
+  Save,
+  Check,
+  Key,
+  ExternalLink,
+  RefreshCw,
+} from "lucide-react";
 import { useTempoAccounts } from "./hooks/useTempoAccounts";
 import { Skeleton } from "./components/ui/skeleton";
 import { Accordion } from "./components/ui/accordion";
@@ -13,6 +21,7 @@ import {
   exportAccountsToCsv,
   STORAGE_KEY,
 } from "./lib/utils";
+import { invoke, router, view } from "@forge/bridge";
 
 function App() {
   const { accounts, loading, error } = useTempoAccounts();
@@ -23,6 +32,11 @@ function App() {
 
   const [isSaved, setIsSaved] = useState(false);
   const [hasLoadedSavedFilters, setHasLoadedSavedFilters] = useState(false);
+
+  // Auth flow states
+  const [authCode, setAuthCode] = useState<string>("");
+  const [isExchanging, setIsExchanging] = useState<boolean>(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   // Extract list of all unique customer names
   const allCustomers = useMemo(() => {
@@ -77,6 +91,46 @@ function App() {
     localStorage.removeItem(STORAGE_KEY);
   };
 
+  const handleStartOAuth = async () => {
+    try {
+      const { clientId, redirectUri } = (await invoke(
+        "getTempoAuthUrl",
+      )) as any;
+
+      // Fetch the real Jira Cloud site URL (e.g., https://your-site.atlassian.net)
+      const context = await view.getContext();
+      const siteUrl = context.siteUrl;
+
+      const authUrl = `https://api.tempo.io/oauth/authorize/redirect?client_id=${clientId}&redirect_uri=${encodeURIComponent(
+        redirectUri || "",
+      )}&response_type=code&jira_url=${encodeURIComponent(siteUrl)}`;
+
+      await router.open(authUrl);
+    } catch (err: any) {
+      console.error("Failed to get authorization URL:", err);
+      setAuthError("Failed to launch authorization window.");
+    }
+  };
+
+  const handleExchangeCode = async () => {
+    if (!authCode.trim()) return;
+    setIsExchanging(true);
+    setAuthError(null);
+
+    try {
+      await invoke("exchangeTempoCode", { code: authCode.trim() });
+      window.location.reload(); // Reload to fetch accounts with new token
+    } catch (err: any) {
+      console.error("Exchange code failed:", err);
+      setAuthError(
+        err.message ||
+          "Failed to exchange code. Please check the code and try again.",
+      );
+    } finally {
+      setIsExchanging(false);
+    }
+  };
+
   const isStatusFiltered = appliedStatuses.length < AVAILABLE_STATUSES.length;
   const isCustomerFiltered =
     allCustomers.length > 0 && appliedCustomers.length < allCustomers.length;
@@ -116,11 +170,93 @@ function App() {
     );
   }, [filteredAccounts]);
 
+  // Handle Authentication Prompt when tokens are missing
+  const isAuthError =
+    error &&
+    (error.includes("NO_TEMPO_TOKENS") || error.includes("REFRESH_FAILED"));
+
+  if (isAuthError) {
+    return (
+      <div className="p-8 max-w-[600px] mx-auto space-y-6">
+        <div className="bg-white border rounded-lg p-6 shadow-sm space-y-6">
+          <div className="flex items-center gap-3 border-b pb-4">
+            <div className="p-2 bg-blue-50 text-blue-600 rounded-md">
+              <Key className="h-6 w-6" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-slate-900">
+                Connect Tempo Account
+              </h2>
+              <p className="text-sm text-slate-500">
+                Authorize this app to access your Tempo time-tracking data.
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Step 1: Get Authorization Code
+              </label>
+              <Button
+                onClick={handleStartOAuth}
+                className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                <ExternalLink className="h-4 w-4" />
+                Authorize Access in Tempo
+              </Button>
+            </div>
+
+            <div className="space-y-2 pt-2">
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Step 2: Enter Authorization Code
+              </label>
+              <p className="text-xs text-slate-500">
+                After granting access in the popup, copy the string after{" "}
+                <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-700">
+                  code=
+                </code>{" "}
+                in the address bar and paste it below.
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="e.g. uDf10APOUiLGGK..."
+                  value={authCode}
+                  onChange={(e) => setAuthCode(e.target.value)}
+                  className="flex-1 px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <Button
+                  onClick={handleExchangeCode}
+                  disabled={isExchanging || !authCode.trim()}
+                  className="bg-slate-900 hover:bg-slate-800 text-white min-w-[120px]"
+                >
+                  {isExchanging ? (
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                  ) : (
+                    "Connect"
+                  )}
+                </Button>
+              </div>
+            </div>
+
+            {authError && (
+              <p className="text-sm text-red-600 bg-red-50 p-2.5 rounded-md border border-red-200">
+                {authError}
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Handle generic errors
   if (error) {
     return (
-      <div className="p-8 text-red-500">
+      <div className="p-8 max-w-[1400px] mx-auto text-red-700">
         <h2 className="text-xl font-semibold">Error Loading Accounts</h2>
-        <p>{error}</p>
+        <p className="mt-1 text-sm text-red-600">{error}</p>
       </div>
     );
   }
@@ -222,6 +358,29 @@ function App() {
           )}
         </Accordion>
       )}
+      {/* 
+        <div className="fixed bottom-4 right-4 bg-slate-900 text-white p-3 rounded-lg shadow-xl flex gap-2 text-xs z-50">
+          <button
+            onClick={async () => {
+              const data = await invoke("debugStorage");
+              console.log("Storage Data:", data);
+              alert(JSON.stringify(data, null, 2));
+            }}
+            className="bg-slate-700 hover:bg-slate-600 px-2.5 py-1 rounded"
+          >
+            🔍 Inspect Storage
+          </button>
+          <button
+            onClick={async () => {
+              await invoke("clearStorage");
+              window.location.reload();
+            }}
+            className="bg-red-600 hover:bg-red-500 px-2.5 py-1 rounded font-bold"
+          >
+            🧹 Wipe Storage & Test Auth
+          </button>
+        </div>
+       */}
     </div>
   );
 }
