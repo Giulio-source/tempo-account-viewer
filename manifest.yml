@@ -12,6 +12,11 @@ modules:
   function:
     - key: resolver
       handler: index.handler
+    - key: callbackHandler
+      handler: index.tempoCallback
+  webtrigger:
+    - key: tempo-oauth-callback
+      function: callbackHandler
 
 resources:
   - key: main

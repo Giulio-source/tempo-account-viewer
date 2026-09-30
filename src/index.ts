@@ -11,10 +11,6 @@ interface TempoTokenData {
   expiresAt: number;
 }
 
-/**
- * Retrieves a valid Tempo access token.
- * Automatically refreshes the token in the background if it is near expiration.
- */
 async function getValidTempoToken(): Promise<string> {
   const tokenData = (await kvs.getSecret("TEMPO_OAUTH_DATA")) as
     | TempoTokenData
@@ -66,7 +62,81 @@ async function getValidTempoToken(): Promise<string> {
   return updatedTokenData.accessToken;
 }
 
-// 1. Resolver: Provides Client ID & Redirect URI to frontend
+export async function tempoCallback(request: any) {
+  try {
+    // Extract 'code' from query parameters (e.g. ?code=XYZ)
+    const code = request.queryParameters?.code?.[0];
+
+    if (!code) {
+      return {
+        body: "<html><body><h2>Authorization Failed</h2><p>No authorization code received.</p></body></html>",
+        headers: { "Content-Type": ["text/html"] },
+        statusCode: 400,
+      };
+    }
+
+    const clientId = process.env.TEMPO_CLIENT_ID;
+    const clientSecret = process.env.TEMPO_CLIENT_SECRET;
+    const redirectUri = process.env.TEMPO_REDIRECT_URI;
+
+    // Exchange code for tokens
+    const response = await fetch(TEMPO_TOKEN_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        client_id: clientId || "",
+        client_secret: clientSecret || "",
+        redirect_uri: redirectUri || "",
+        code,
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      return {
+        body: `<html><body><h2>Token Exchange Failed</h2><p>${errText}</p></body></html>`,
+        headers: { "Content-Type": ["text/html"] },
+        statusCode: 400,
+      };
+    }
+
+    const tokenInfo = await response.json();
+    const tokenData: TempoTokenData = {
+      accessToken: tokenInfo.access_token,
+      refreshToken: tokenInfo.refresh_token,
+      expiresAt: Date.now() + tokenInfo.expires_in * 1000,
+    };
+
+    // Save tokens securely in Forge storage
+    await kvs.setSecret("TEMPO_OAUTH_DATA", tokenData);
+
+    // Return HTML that automatically closes the tab
+    return {
+      body: `
+        <html>
+          <body style="font-family: sans-serif; text-align: center; padding-top: 50px;">
+            <h2 style="color: #0052CC;">Tempo Authorization Successful!</h2>
+            <p>You have successfully connected Tempo to Jira.</p>
+            <p>This window will close automatically...</p>
+            <script>
+              setTimeout(() => { window.close(); }, 1500);
+            </script>
+          </body>
+        </html>
+      `,
+      headers: { "Content-Type": ["text/html"] },
+      statusCode: 200,
+    };
+  } catch (err: any) {
+    return {
+      body: `<html><body><h2>Error</h2><p>${err.message}</p></body></html>`,
+      headers: { "Content-Type": ["text/html"] },
+      statusCode: 500,
+    };
+  }
+}
+
 resolver.define("getTempoAuthUrl", async () => {
   return {
     clientId: process.env.TEMPO_CLIENT_ID,
@@ -74,45 +144,6 @@ resolver.define("getTempoAuthUrl", async () => {
   };
 });
 
-// 2. Resolver: Exchanges initial auth code for token pair
-resolver.define("exchangeTempoCode", async (req) => {
-  const { code } = req.payload;
-  const clientId = process.env.TEMPO_CLIENT_ID;
-  const clientSecret = process.env.TEMPO_CLIENT_SECRET;
-  const redirectUri = process.env.TEMPO_REDIRECT_URI;
-
-  if (!code) throw new Error("CODE_REQUIRED");
-
-  const response = await fetch(TEMPO_TOKEN_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "authorization_code",
-      client_id: clientId || "",
-      client_secret: clientSecret || "",
-      redirect_uri: redirectUri || "",
-      code,
-    }),
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`EXCHANGE_FAILED: ${errText}`);
-  }
-
-  const tokenInfo = await response.json();
-
-  const tokenData: TempoTokenData = {
-    accessToken: tokenInfo.access_token,
-    refreshToken: tokenInfo.refresh_token,
-    expiresAt: Date.now() + tokenInfo.expires_in * 1000,
-  };
-
-  await kvs.setSecret("TEMPO_OAUTH_DATA", tokenData);
-  return { success: true };
-});
-
-// 3. Resolver: Fetches Tempo accounts & enriches with parsed metadata and logged worklog hours
 resolver.define("getTempoAccounts", async () => {
   const token = await getValidTempoToken();
 

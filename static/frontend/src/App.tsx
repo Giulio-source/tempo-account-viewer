@@ -33,9 +33,8 @@ function App() {
   const [isSaved, setIsSaved] = useState(false);
   const [hasLoadedSavedFilters, setHasLoadedSavedFilters] = useState(false);
 
-  // Auth flow states
-  const [authCode, setAuthCode] = useState<string>("");
-  const [isExchanging, setIsExchanging] = useState<boolean>(false);
+  // Automated OAuth Flow State
+  const [isAuthorizing, setIsAuthorizing] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
   // Extract list of all unique customer names
@@ -91,13 +90,15 @@ function App() {
     localStorage.removeItem(STORAGE_KEY);
   };
 
+  // 1-Click Automated OAuth Trigger
   const handleStartOAuth = async () => {
+    setIsAuthorizing(true);
+    setAuthError(null);
+
     try {
       const { clientId, redirectUri } = (await invoke(
         "getTempoAuthUrl",
       )) as any;
-
-      // Fetch the real Jira Cloud site URL (e.g., https://your-site.atlassian.net)
       const context = await view.getContext();
       const siteUrl = context.siteUrl;
 
@@ -106,28 +107,27 @@ function App() {
       )}&response_type=code&jira_url=${encodeURIComponent(siteUrl)}`;
 
       await router.open(authUrl);
+
+      // Background Polling: Checks every 2 seconds if webtrigger completed exchange
+      const pollInterval = setInterval(async () => {
+        try {
+          await invoke("getTempoAccounts");
+          clearInterval(pollInterval);
+          window.location.reload(); // Instantly refresh app view on success!
+        } catch (e) {
+          // Token not saved yet, keep waiting...
+        }
+      }, 2000);
+
+      // Stop polling after 3 minutes if prompt was closed or abandoned
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        setIsAuthorizing(false);
+      }, 180000);
     } catch (err: any) {
-      console.error("Failed to get authorization URL:", err);
+      console.error("Failed to launch authorization window:", err);
       setAuthError("Failed to launch authorization window.");
-    }
-  };
-
-  const handleExchangeCode = async () => {
-    if (!authCode.trim()) return;
-    setIsExchanging(true);
-    setAuthError(null);
-
-    try {
-      await invoke("exchangeTempoCode", { code: authCode.trim() });
-      window.location.reload(); // Reload to fetch accounts with new token
-    } catch (err: any) {
-      console.error("Exchange code failed:", err);
-      setAuthError(
-        err.message ||
-          "Failed to exchange code. Please check the code and try again.",
-      );
-    } finally {
-      setIsExchanging(false);
+      setIsAuthorizing(false);
     }
   };
 
@@ -170,82 +170,63 @@ function App() {
     );
   }, [filteredAccounts]);
 
-  // Handle Authentication Prompt when tokens are missing
+  // Intercept missing auth state
   const isAuthError =
     error &&
     (error.includes("NO_TEMPO_TOKENS") || error.includes("REFRESH_FAILED"));
 
   if (isAuthError) {
     return (
-      <div className="p-8 max-w-[600px] mx-auto space-y-6">
-        <div className="bg-white border rounded-lg p-6 shadow-sm space-y-6">
-          <div className="flex items-center gap-3 border-b pb-4">
-            <div className="p-2 bg-blue-50 text-blue-600 rounded-md">
-              <Key className="h-6 w-6" />
-            </div>
-            <div>
-              <h2 className="text-xl font-bold text-slate-900">
-                Connect Tempo Account
-              </h2>
-              <p className="text-sm text-slate-500">
-                Authorize this app to access your Tempo time-tracking data.
-              </p>
+      <div className="p-8 max-w-[500px] mx-auto space-y-6">
+        <div className="bg-white border rounded-lg p-8 shadow-sm space-y-6 text-center">
+          <div className="flex justify-center">
+            <div className="p-3 bg-blue-50 text-blue-600 rounded-full">
+              <Key className="h-8 w-8" />
             </div>
           </div>
 
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Step 1: Get Authorization Code
-              </label>
-              <Button
-                onClick={handleStartOAuth}
-                className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white"
-              >
-                <ExternalLink className="h-4 w-4" />
-                Authorize Access in Tempo
-              </Button>
-            </div>
+          <div>
+            <h2 className="text-xl font-bold text-slate-900">
+              Connect Tempo Account
+            </h2>
+            <p className="text-sm text-slate-500 mt-1">
+              Authorize access to view customer time allocations and billed
+              hours.
+            </p>
+          </div>
 
-            <div className="space-y-2 pt-2">
-              <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Step 2: Enter Authorization Code
-              </label>
-              <p className="text-xs text-slate-500">
-                After granting access in the popup, copy the string after{" "}
-                <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-700">
-                  code=
-                </code>{" "}
-                in the address bar and paste it below.
-              </p>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="e.g. uDf10APOUiLGGK..."
-                  value={authCode}
-                  onChange={(e) => setAuthCode(e.target.value)}
-                  className="flex-1 px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <Button
-                  onClick={handleExchangeCode}
-                  disabled={isExchanging || !authCode.trim()}
-                  className="bg-slate-900 hover:bg-slate-800 text-white min-w-[120px]"
-                >
-                  {isExchanging ? (
-                    <RefreshCw className="h-4 w-4 animate-spin" />
-                  ) : (
-                    "Connect"
-                  )}
-                </Button>
-              </div>
-            </div>
+          <div className="space-y-3 pt-2">
+            <Button
+              onClick={handleStartOAuth}
+              disabled={isAuthorizing}
+              className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white h-11 text-base font-medium"
+            >
+              {isAuthorizing ? (
+                <>
+                  <RefreshCw className="h-5 w-5 animate-spin" />
+                  Waiting for authorization...
+                </>
+              ) : (
+                <>
+                  <ExternalLink className="h-5 w-5" />
+                  Connect Tempo Account
+                </>
+              )}
+            </Button>
 
-            {authError && (
-              <p className="text-sm text-red-600 bg-red-50 p-2.5 rounded-md border border-red-200">
-                {authError}
+            {isAuthorizing && (
+              <p className="text-xs text-slate-500 animate-pulse">
+                Complete authorization in the opened window. This page will
+                update automatically.
               </p>
             )}
           </div>
+
+          {authError && (
+            <p className="text-sm text-red-600 bg-red-50 p-2.5 rounded-md border border-red-200">
+              {authError}
+            </p>
+          )}
         </div>
       </div>
     );
