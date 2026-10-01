@@ -1,13 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
-import {
-  Download,
-  RotateCcw,
-  Save,
-  Check,
-  Key,
-  ExternalLink,
-  RefreshCw,
-} from "lucide-react";
+import { Download, RotateCcw, Save, Check } from "lucide-react";
 import { useTempoAccounts } from "./hooks/useTempoAccounts";
 import { Skeleton } from "./components/ui/skeleton";
 import { Accordion } from "./components/ui/accordion";
@@ -21,7 +13,8 @@ import {
   exportAccountsToCsv,
   STORAGE_KEY,
 } from "./lib/utils";
-import { invoke, router, view } from "@forge/bridge";
+import { invoke } from "@forge/bridge";
+import { AuthModal } from "./components/AuthModal";
 
 function App() {
   const { accounts, loading, error } = useTempoAccounts();
@@ -33,11 +26,6 @@ function App() {
   const [isSaved, setIsSaved] = useState(false);
   const [hasLoadedSavedFilters, setHasLoadedSavedFilters] = useState(false);
 
-  // Automated OAuth Flow State
-  const [isAuthorizing, setIsAuthorizing] = useState<boolean>(false);
-  const [authError, setAuthError] = useState<string | null>(null);
-
-  // Extract list of all unique customer names
   const allCustomers = useMemo(() => {
     if (!accounts) return [];
     const set = new Set<string>();
@@ -90,47 +78,6 @@ function App() {
     localStorage.removeItem(STORAGE_KEY);
   };
 
-  // 1-Click Automated OAuth Trigger
-  const handleStartOAuth = async () => {
-    setIsAuthorizing(true);
-    setAuthError(null);
-
-    try {
-      const { clientId, redirectUri } = (await invoke(
-        "getTempoAuthUrl",
-      )) as any;
-      const context = await view.getContext();
-      const siteUrl = context.siteUrl;
-
-      const authUrl = `https://api.tempo.io/oauth/authorize/redirect?client_id=${clientId}&redirect_uri=${encodeURIComponent(
-        redirectUri || "",
-      )}&response_type=code&jira_url=${encodeURIComponent(siteUrl)}`;
-
-      await router.open(authUrl);
-
-      // Background Polling: Checks every 2 seconds if webtrigger completed exchange
-      const pollInterval = setInterval(async () => {
-        try {
-          await invoke("getTempoAccounts");
-          clearInterval(pollInterval);
-          window.location.reload(); // Instantly refresh app view on success!
-        } catch (e) {
-          // Token not saved yet, keep waiting...
-        }
-      }, 2000);
-
-      // Stop polling after 3 minutes if prompt was closed or abandoned
-      setTimeout(() => {
-        clearInterval(pollInterval);
-        setIsAuthorizing(false);
-      }, 180000);
-    } catch (err: any) {
-      console.error("Failed to launch authorization window:", err);
-      setAuthError("Failed to launch authorization window.");
-      setIsAuthorizing(false);
-    }
-  };
-
   const isStatusFiltered = appliedStatuses.length < AVAILABLE_STATUSES.length;
   const isCustomerFiltered =
     allCustomers.length > 0 && appliedCustomers.length < allCustomers.length;
@@ -170,69 +117,14 @@ function App() {
     );
   }, [filteredAccounts]);
 
-  // Intercept missing auth state
   const isAuthError =
     error &&
     (error.includes("NO_TEMPO_TOKENS") || error.includes("REFRESH_FAILED"));
 
   if (isAuthError) {
-    return (
-      <div className="p-8 max-w-[500px] mx-auto space-y-6">
-        <div className="bg-white border rounded-lg p-8 shadow-sm space-y-6 text-center">
-          <div className="flex justify-center">
-            <div className="p-3 bg-blue-50 text-blue-600 rounded-full">
-              <Key className="h-8 w-8" />
-            </div>
-          </div>
-
-          <div>
-            <h2 className="text-xl font-bold text-slate-900">
-              Connect Tempo Account
-            </h2>
-            <p className="text-sm text-slate-500 mt-1">
-              Authorize access to view customer time allocations and billed
-              hours.
-            </p>
-          </div>
-
-          <div className="space-y-3 pt-2">
-            <Button
-              onClick={handleStartOAuth}
-              disabled={isAuthorizing}
-              className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white h-11 text-base font-medium"
-            >
-              {isAuthorizing ? (
-                <>
-                  <RefreshCw className="h-5 w-5 animate-spin" />
-                  Waiting for authorization...
-                </>
-              ) : (
-                <>
-                  <ExternalLink className="h-5 w-5" />
-                  Connect Tempo Account
-                </>
-              )}
-            </Button>
-
-            {isAuthorizing && (
-              <p className="text-xs text-slate-500 animate-pulse">
-                Complete authorization in the opened window. This page will
-                update automatically.
-              </p>
-            )}
-          </div>
-
-          {authError && (
-            <p className="text-sm text-red-600 bg-red-50 p-2.5 rounded-md border border-red-200">
-              {authError}
-            </p>
-          )}
-        </div>
-      </div>
-    );
+    return <AuthModal />;
   }
 
-  // Handle generic errors
   if (error) {
     return (
       <div className="p-8 max-w-[1400px] mx-auto text-red-700">
@@ -244,7 +136,6 @@ function App() {
 
   return (
     <div className="p-8 max-w-[1400px] mx-auto space-y-6">
-      {/* Header Bar */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b pb-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Tempo Accounts</h1>
