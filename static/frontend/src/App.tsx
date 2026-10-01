@@ -339,29 +339,37 @@ function App() {
           )}
         </Accordion>
       )}
-      {/* 
-        <div className="fixed bottom-4 right-4 bg-slate-900 text-white p-3 rounded-lg shadow-xl flex gap-2 text-xs z-50">
-          <button
-            onClick={async () => {
-              const data = await invoke("debugStorage");
-              console.log("Storage Data:", data);
-              alert(JSON.stringify(data, null, 2));
-            }}
-            className="bg-slate-700 hover:bg-slate-600 px-2.5 py-1 rounded"
-          >
-            🔍 Inspect Storage
-          </button>
-          <button
-            onClick={async () => {
-              await invoke("clearStorage");
-              window.location.reload();
-            }}
-            className="bg-red-600 hover:bg-red-500 px-2.5 py-1 rounded font-bold"
-          >
-            🧹 Wipe Storage & Test Auth
-          </button>
-        </div>
-       */}
+
+      <div className="fixed bottom-4 right-4 bg-slate-900 text-white p-3 rounded-lg shadow-xl flex gap-2 text-xs z-50">
+        <button
+          onClick={async () => {
+            const data = await invoke("debugStorage");
+            console.log("Storage Data:", data);
+            alert(JSON.stringify(data, null, 2));
+          }}
+          className="bg-slate-700 hover:bg-slate-600 px-2.5 py-1 rounded"
+        >
+          🔍 Inspect Storage
+        </button>
+        <button
+          onClick={async () => {
+            const data = await invoke("expireToken");
+            console.log("Token Expired:", data);
+          }}
+          className="bg-slate-700 hover:bg-slate-600 px-2.5 py-1 rounded"
+        >
+          ⏰ Expire Token
+        </button>
+        <button
+          onClick={async () => {
+            await invoke("clearStorage");
+            window.location.reload();
+          }}
+          className="bg-red-600 hover:bg-red-500 px-2.5 py-1 rounded font-bold"
+        >
+          🧹 Wipe Storage & Test Auth
+        </button>
+      </div>
     </div>
   );
 }

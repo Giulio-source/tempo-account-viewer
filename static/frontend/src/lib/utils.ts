@@ -28,7 +28,7 @@ export const getUsageColors = (percent: number) => {
   };
 };
 
-export const AVAILABLE_STATUSES = ["OPEN", "CLOSED"];
+export const AVAILABLE_STATUSES = ["OPEN", "CLOSED", "ARCHIVED"];
 
 export const getStatusBadgeStyle = (status: string) => {
   const normalized = status.toUpperCase();

@@ -30,6 +30,7 @@ async function getValidTempoToken(): Promise<string> {
 
   const clientId = process.env.TEMPO_CLIENT_ID;
   const clientSecret = process.env.TEMPO_CLIENT_SECRET;
+  const redirectUri = process.env.TEMPO_REDIRECT_URI;
 
   if (!clientId || !clientSecret) {
     throw new Error("MISSING_OAUTH_CREDENTIALS");
@@ -42,11 +43,17 @@ async function getValidTempoToken(): Promise<string> {
       grant_type: "refresh_token",
       client_id: clientId,
       client_secret: clientSecret,
+      redirect_uri: redirectUri || "",
       refresh_token: tokenData.refreshToken,
     }),
   });
 
   if (!response.ok) {
+    const errorText = await response.text();
+    console.error(
+      `❌ [TEMPO OAUTH] Refresh failed (${response.status}):`,
+      errorText,
+    );
     throw new Error(`REFRESH_FAILED_${response.status}`);
   }
 
@@ -59,6 +66,8 @@ async function getValidTempoToken(): Promise<string> {
   };
 
   await kvs.setSecret("TEMPO_OAUTH_DATA", updatedTokenData);
+  console.log("✅ [TEMPO OAUTH] Successfully refreshed access token!");
+  
   return updatedTokenData.accessToken;
 }
 
@@ -235,13 +244,24 @@ resolver.define("debugStorage", async () => {
   return oauthData || { message: "No data found" };
 });
 
-// 2. Wipe stored secret/data
 resolver.define("clearStorage", async () => {
   await kvs.deleteSecret("TEMPO_OAUTH_DATA");
   console.log(
     "🧹 [DEBUG STORAGE] Cleared TEMPO_OAUTH_DATA from Forge storage!",
   );
   return { status: "cleared" };
+});
+
+resolver.define("expireToken", async () => {
+  const tokenData = (await kvs.getSecret("TEMPO_OAUTH_DATA")) as any;
+  if (!tokenData) return { error: "No storage found" };
+
+  // Overwrite expiresAt to 10 seconds in the past
+  tokenData.expiresAt = Date.now() - 10000;
+  await kvs.setSecret("TEMPO_OAUTH_DATA", tokenData);
+
+  console.log("⏰ [DEBUG] Token timestamp artificially forced to expired!");
+  return tokenData;
 });
 
 export const handler = resolver.getDefinitions();
